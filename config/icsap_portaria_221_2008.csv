@@ -1,0 +1,74 @@
+group,condition,match_type,start,end
+1,Coqueluche,prefix3,A37,A37
+1,Difteria,prefix3,A36,A36
+1,Tetano,prefix3,A33,A35
+1,Parotidite,prefix3,B26,B26
+1,Rubeola,prefix3,B06,B06
+1,Sarampo,prefix3,B05,B05
+1,Febre amarela,prefix3,A95,A95
+1,Hepatite B,prefix3,B16,B16
+1,Meningite por Haemophilus,exact4,G000,G000
+1,Meningite tuberculosa,exact4,A170,A170
+1,Tuberculose miliar,prefix3,A19,A19
+1,Tuberculose pulmonar,exact4_range,A150,A159
+1,Tuberculose pulmonar,exact4_range,A160,A169
+1,Outras tuberculoses do sistema nervoso,exact4_range,A171,A179
+1,Outras tuberculoses,prefix3,A18,A18
+1,Febre reumatica,prefix3_range,I00,I02
+1,Sifilis,prefix3_range,A51,A53
+1,Malaria,prefix3_range,B50,B54
+1,Ascaridiase,prefix3,B77,B77
+2,Desidratacao,prefix3,E86,E86
+2,Gastroenterites infecciosas,prefix3_range,A00,A09
+3,Anemia por deficiencia de ferro,prefix3,D50,D50
+4,Deficiencias nutricionais,prefix3_range,E40,E46
+5,Infeccoes de ouvido nariz e garganta,prefix3,H66,H66
+5,Infeccoes de ouvido nariz e garganta,prefix3_range,J00,J03
+5,Infeccoes de ouvido nariz e garganta,prefix3,J06,J06
+5,Infeccoes de ouvido nariz e garganta,prefix3,J31,J31
+6,Pneumonias bacterianas,prefix3_range,J13,J14
+6,Pneumonias bacterianas,exact4_range,J153,J154
+6,Pneumonias bacterianas,exact4_range,J158,J159
+6,Pneumonias bacterianas,exact4,J181,J181
+7,Asma,prefix3_range,J45,J46
+8,Doencas pulmonares,prefix3_range,J20,J21
+8,Doencas pulmonares,prefix3_range,J40,J44
+8,Doencas pulmonares,prefix3,J47,J47
+9,Hipertensao,prefix3_range,I10,I11
+10,Angina,prefix3,I20,I20
+11,Insuficiencia cardiaca,prefix3,I50,I50
+11,Edema pulmonar,prefix3,J81,J81
+12,Doencas cerebrovasculares,prefix3_range,I63,I67
+12,Doencas cerebrovasculares,prefix3,I69,I69
+12,Doencas cerebrovasculares,prefix3_range,G45,G46
+13,Diabetes com coma ou cetoacidose,exact4_range,E100,E101
+13,Diabetes com coma ou cetoacidose,exact4_range,E110,E111
+13,Diabetes com coma ou cetoacidose,exact4_range,E120,E121
+13,Diabetes com coma ou cetoacidose,exact4_range,E130,E131
+13,Diabetes com coma ou cetoacidose,exact4_range,E140,E141
+13,Diabetes com complicacoes,exact4_range,E102,E108
+13,Diabetes com complicacoes,exact4_range,E112,E118
+13,Diabetes com complicacoes,exact4_range,E122,E128
+13,Diabetes com complicacoes,exact4_range,E132,E138
+13,Diabetes com complicacoes,exact4_range,E142,E148
+13,Diabetes sem complicacoes,exact4,E109,E109
+13,Diabetes sem complicacoes,exact4,E119,E119
+13,Diabetes sem complicacoes,exact4,E129,E129
+13,Diabetes sem complicacoes,exact4,E139,E139
+13,Diabetes sem complicacoes,exact4,E149,E149
+14,Epilepsias,prefix3_range,G40,G41
+15,Infeccao no rim e trato urinario,prefix3_range,N10,N12
+15,Infeccao no rim e trato urinario,prefix3,N30,N30
+15,Infeccao no rim e trato urinario,prefix3,N34,N34
+15,Infeccao no rim e trato urinario,exact4,N390,N390
+16,Infeccao da pele e tecido subcutaneo,prefix3,A46,A46
+16,Infeccao da pele e tecido subcutaneo,prefix3_range,L01,L04
+16,Infeccao da pele e tecido subcutaneo,prefix3,L08,L08
+17,Doenca inflamatoria dos orgaos pelvicos femininos,prefix3_range,N70,N73
+17,Doenca inflamatoria dos orgaos pelvicos femininos,prefix3_range,N75,N76
+18,Ulcera gastrointestinal,prefix3_range,K25,K28
+18,Hemorragia gastrointestinal,exact4_range,K920,K922
+19,Doencas relacionadas ao pre natal e parto,prefix3,E03,E03
+19,Doencas relacionadas ao pre natal e parto,prefix3_range,E00,E02
+19,Doencas relacionadas ao pre natal e parto,exact4,E890,E890
+
