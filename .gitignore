@@ -1,0 +1,17 @@
+# Downloaded provider files and manifests
+data/
+*.part
+*.partial
+*_access_manifest.csv
+
+# R and editor state
+.Rhistory
+.RData
+.Ruserdata
+.Rproj.user/
+*.log
+*.tmp
+*.bak
+~$*
+Thumbs.db
+.DS_Store

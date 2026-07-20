@@ -21,7 +21,7 @@ value_after <- function(prefix, default = "") {
 }
 
 data_root <- value_after("--data-dir=", Sys.getenv(
-  "LDI_SOURCE_DATA_DIR", unset = file.path(root, "..", "dados")))
+  "LDI_SOURCE_DATA_DIR", unset = file.path(root, "data")))
 data_root <- normalizePath(data_root, winslash = "/", mustWork = FALSE)
 only <- value_after("--only=", "")
 overwrite <- identical(tolower(value_after("--overwrite=", "false")), "true")
@@ -160,8 +160,6 @@ fetch_one <- function(row) {
     archive <- file.path(data_root, "_downloads", basename(sub("[?].*$", "", url)))
     download_with_retry(url, archive)
     extract_matching(archive, row$archive_member_pattern[[1]], target)
-  } else if (startsWith(row$target_path[[1]], "pipeline://")) {
-    message("INFO ", id, ": this source is acquired and transformed by the full pipeline")
   } else {
     download_with_retry(url, target)
   }
