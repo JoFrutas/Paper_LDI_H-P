@@ -1,0 +1,439 @@
+---
+title: "Lusoindex — 02. Análise estatística"
+subtitle: "Modelos principais e sensibilidades para revisão chunk a chunk"
+author: "João Frutuoso"
+date: "`r format(Sys.Date(), '%d de %B de %Y')`"
+output:
+  html_document:
+    toc: true
+    toc_float:
+      collapsed: false
+    toc_depth: 3
+    number_sections: true
+    theme: flatly
+    highlight: textmate
+    code_folding: show
+    df_print: paged
+params:
+  prepared_rds: ""
+  pipeline_root: ""
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  fig.width = 8,
+  fig.height = 5,
+  dpi = 150
+)
+options(stringsAsFactors = FALSE, scipen = 999)
+```
+
+# Objetivo
+
+Este documento começa na base criada por
+`01_importacao_preparacao_dados.Rmd`. Cada bloco analítico está separado para
+permitir inspeção dos dados, modelos e resultados antes de avançar.
+
+# 1. Localizar e abrir a base preparada
+
+```{r carregar-base}
+resolve_path <- function(value, env_name) {
+  value <- as.character(value)
+  if (!length(value) || is.na(value) || !nzchar(value)) {
+    value <- Sys.getenv(env_name, unset = "")
+  }
+  if (!nzchar(value)) return("")
+  normalizePath(value, winslash = "/", mustWork = FALSE)
+}
+
+input_file <- knitr::current_input(dir = TRUE)
+notebook_dir <- if (nzchar(input_file)) {
+  dirname(normalizePath(input_file, winslash = "/", mustWork = FALSE))
+} else {
+  normalizePath(getwd(), winslash = "/", mustWork = TRUE)
+}
+
+pipeline_root <- resolve_path(params$pipeline_root, "LDI_PIPELINE_DIR")
+rds_path <- resolve_path(params$prepared_rds, "LDI_PREPARED_RDS")
+if (!nzchar(rds_path)) {
+  rds_path <- file.path(notebook_dir, "dados_trabalhados", "ldi_dados_preparados.rds")
+}
+
+if (!file.exists(rds_path)) {
+  stop(
+    "Base preparada inexistente. Execute primeiro 01_importacao_preparacao_dados.Rmd ou defina LDI_PREPARED_RDS."
+  )
+}
+
+project_library <- if (nzchar(pipeline_root)) {
+  file.path(pipeline_root, "renv", "library", "R-4.3", "x86_64-w64-mingw32")
+} else {
+  ""
+}
+if (nzchar(project_library) && dir.exists(project_library)) {
+  .libPaths(unique(c(project_library, .libPaths())))
+}
+
+required_packages <- c(
+  "data.table", "MASS", "sandwich", "clubSandwich", "ggplot2", "knitr"
+)
+missing_packages <- required_packages[
+  !vapply(required_packages, requireNamespace, logical(1), quietly = TRUE)
+]
+if (length(missing_packages)) {
+  stop("Pacotes em falta: ", paste(missing_packages, collapse = ", "))
+}
+
+library(data.table)
+library(ggplot2)
+library(knitr)
+
+dat <- readRDS(rds_path)
+br <- copy(dat$br_model)
+pt <- copy(dat$pt_model)
+results_master <- copy(dat$results_master)
+
+cat("Execução de origem: ", dat$metadata$run_id, "\n", sep = "")
+cat("Portugal: ", nrow(pt), " municípios\n", sep = "")
+cat("Brasil: ", nrow(br), " municípios\n", sep = "")
+```
+
+# 2. Funções auxiliares
+
+```{r funcoes-auxiliares}
+fmt_p <- function(p) {
+  ifelse(p < 0.001, "<0.001", sprintf("%.3f", p))
+}
+
+tidy_vcov <- function(model, term, vcov_matrix, label, exponentiate = FALSE,
+                      df = Inf) {
+  estimate <- unname(coef(model)[term])
+  se <- sqrt(diag(vcov_matrix))[term]
+  statistic <- estimate / se
+  critical <- if (is.finite(df)) qt(0.975, df) else qnorm(0.975)
+  p_value <- if (is.finite(df)) {
+    2 * pt(-abs(statistic), df = df)
+  } else {
+    2 * pnorm(-abs(statistic))
+  }
+  low <- estimate - critical * se
+  high <- estimate + critical * se
+  if (exponentiate) {
+    estimate <- exp(estimate)
+    low <- exp(low)
+    high <- exp(high)
+  }
+  data.table(
+    model = label,
+    effect = estimate,
+    conf_low = low,
+    conf_high = high,
+    p_value = p_value,
+    n = nobs(model)
+  )
+}
+
+tidy_state_hc1 <- function(model, term, cluster, label, exponentiate = FALSE) {
+  vc <- sandwich::vcovCL(model, cluster = cluster, type = "HC1", cadjust = TRUE)
+  tidy_vcov(
+    model, term, vc, label, exponentiate,
+    df = length(unique(cluster)) - 1L
+  )
+}
+
+tidy_cr2 <- function(model, term, cluster, label, exponentiate = FALSE) {
+  vc <- clubSandwich::vcovCR(model, cluster = cluster, type = "CR2")
+  test <- as.data.table(clubSandwich::coef_test(
+    model, vcov = vc, test = "Satterthwaite"
+  ))
+  row <- test[Coef == term]
+  stopifnot(nrow(row) == 1L)
+  critical <- qt(0.975, df = row$df_Satt)
+  values <- c(row$beta, row$beta - critical * row$SE,
+              row$beta + critical * row$SE)
+  if (exponentiate) values <- exp(values)
+  data.table(
+    model = label,
+    effect = values[1],
+    conf_low = values[2],
+    conf_high = values[3],
+    p_value = row$p_Satt,
+    inference_df = row$df_Satt,
+    n = nobs(model)
+  )
+}
+
+show_effects <- function(x, digits = 3) {
+  out <- copy(x)
+  numeric_cols <- intersect(
+    c("effect", "conf_low", "conf_high", "p_value", "inference_df"),
+    names(out)
+  )
+  out[, (numeric_cols) := lapply(.SD, round, digits), .SDcols = numeric_cols]
+  kable(out)
+}
+```
+
+# 3. Fluxo e descrição da amostra
+
+```{r fluxo-amostra}
+sample_flow <- dat$sensitivity_tables$table_analysis_sample_flow
+kable(sample_flow, caption = "Fluxo das amostras analíticas")
+```
+
+```{r distribuicao-ldi, fig.height=4}
+ggplot(rbind(
+  data.table(country = "Portugal", ldi = pt$z_ldi),
+  data.table(country = "Brazil", ldi = br$z_ldi)
+), aes(x = ldi, fill = country)) +
+  geom_histogram(bins = 35, alpha = 0.65, position = "identity") +
+  facet_wrap(~country, scales = "free_y") +
+  theme_minimal(base_size = 12) +
+  guides(fill = "none") +
+  labs(x = "Standardised deprivation score", y = "Municipalities")
+```
+
+# 4. Validade convergente e associações não ajustadas
+
+```{r correlacoes-spearman}
+cor_spearman <- function(x, y) cor(x, y, method = "spearman", use = "complete.obs")
+
+correlations <- data.table(
+  comparison = c(
+    "Brazilian Deprivation Index rank",
+    "Municipal Human Development Index",
+    "ICSAP per resident-year",
+    "ICSAP share of all admissions",
+    "Portugal crude mortality, 2020"
+  ),
+  rho = c(
+    cor_spearman(br$ldi_z, br$ibp_rank),
+    cor_spearman(br$ldi_z, br$idhm),
+    cor_spearman(br$ldi_z, br$icsap_rate_per_1000_per_year),
+    cor_spearman(br$ldi_z, br$icsap_proportion_pct),
+    cor_spearman(dat$pt_mortality$ldi_z,
+                 dat$pt_mortality$mortality_rate_per_1000)
+  )
+)
+correlations[, rho := round(rho, 3)]
+kable(correlations)
+```
+
+Os intervalos bootstrap de 9.999 repetições já validados podem ser consultados
+sem repetir a operação demorada:
+
+```{r correlacoes-bootstrap-validadas}
+criterion_table <- results_master[block == "criterion_association",
+  .(outcome, effect, effect_low, effect_high, n)
+]
+kable(criterion_table)
+```
+
+# 5. Brasil — dois outcomes com o mesmo numerador
+
+```{r br-resumo-outcomes}
+br_outcomes <- data.table(
+  measure = c("All admissions", "ICSAP admissions", "Non-ICSAP admissions"),
+  total = c(
+    sum(br$n_admissions_total),
+    sum(br$n_icsap_total),
+    sum(br$n_admissions_total - br$n_icsap_total)
+  )
+)
+kable(br_outcomes)
+```
+
+## 5.1 Taxa por residente-ano: regressão binomial negativa
+
+```{r br-modelos-taxa}
+rate_formula_1 <- n_icsap_total ~ z_ldi + offset(log(exposure_person_years))
+rate_formula_2 <- n_icsap_total ~ z_ldi + z_age014 + z_age70 + z_logdens +
+  offset(log(exposure_person_years))
+rate_formula_3 <- n_icsap_total ~ z_ldi + z_age014 + z_age70 + z_logdens +
+  region_code + offset(log(exposure_person_years))
+
+rate_1 <- MASS::glm.nb(rate_formula_1, data = br, control = glm.control(maxit = 100))
+rate_2 <- MASS::glm.nb(rate_formula_2, data = br, control = glm.control(maxit = 100))
+rate_3 <- MASS::glm.nb(rate_formula_3, data = br, control = glm.control(maxit = 100))
+
+stopifnot(rate_1$converged, rate_2$converged, rate_3$converged)
+```
+
+## 5.2 Proporção dos internamentos: regressão quasi-binomial
+
+```{r br-modelos-proporcao}
+share_formula_1 <- cbind(n_icsap_total, n_admissions_total - n_icsap_total) ~ z_ldi
+share_formula_2 <- cbind(n_icsap_total, n_admissions_total - n_icsap_total) ~
+  z_ldi + z_age014 + z_age70 + z_logdens
+share_formula_3 <- cbind(n_icsap_total, n_admissions_total - n_icsap_total) ~
+  z_ldi + z_age014 + z_age70 + z_logdens + region_code
+
+share_1 <- glm(share_formula_1, family = quasibinomial(), data = br)
+share_2 <- glm(share_formula_2, family = quasibinomial(), data = br)
+share_3 <- glm(share_formula_3, family = quasibinomial(), data = br)
+
+stopifnot(share_1$converged, share_2$converged, share_3$converged)
+```
+
+## 5.3 Escada de ajustamento com erros agrupados por estado
+
+```{r br-escada-hc1}
+state_cluster <- br$region_code
+
+br_ladder <- rbindlist(list(
+  tidy_state_hc1(rate_1, "z_ldi", state_cluster, "Rate 1: crude", TRUE),
+  tidy_state_hc1(rate_2, "z_ldi", state_cluster, "Rate 2: age + density", TRUE),
+  tidy_state_hc1(rate_3, "z_ldi", state_cluster, "Rate 3: + state", TRUE),
+  tidy_state_hc1(share_1, "z_ldi", state_cluster, "Share 1: crude", TRUE),
+  tidy_state_hc1(share_2, "z_ldi", state_cluster, "Share 2: age + density", TRUE),
+  tidy_state_hc1(share_3, "z_ldi", state_cluster, "Share 3: + state", TRUE)
+), use.names = TRUE, fill = TRUE)
+
+show_effects(br_ladder)
+```
+
+## 5.4 Inferência principal: CR2/Satterthwaite
+
+```{r br-principal-cr2}
+br_primary <- rbindlist(list(
+  tidy_cr2(rate_3, "z_ldi", state_cluster, "ICSAP rate ratio", TRUE),
+  tidy_cr2(share_3, "z_ldi", state_cluster, "ICSAP admission-share odds ratio", TRUE)
+), use.names = TRUE, fill = TRUE)
+
+show_effects(br_primary)
+```
+
+## 5.5 Confirmar contra os resultados auditados
+
+```{r br-validar-resultados}
+br_validation <- data.table(
+  outcome = c("Population rate", "Admission share"),
+  notebook = c(
+    br_primary[model == "ICSAP rate ratio", effect],
+    br_primary[model == "ICSAP admission-share odds ratio", effect]
+  ),
+  results_master = c(
+    results_master[block == "br_primary_cr2" & grepl("rate ratio", outcome), effect],
+    results_master[block == "br_primary_cr2" & grepl("share odds", outcome), effect]
+  )
+)
+br_validation[, absolute_difference := abs(notebook - results_master)]
+kable(br_validation)
+stopifnot(all(br_validation$absolute_difference < 1e-8))
+```
+
+# 6. Portugal — mortalidade bruta em 2020
+
+```{r pt-modelos}
+pt_1 <- lm(mortality_rate_per_1000 ~ z_ldi, data = pt)
+pt_2 <- lm(mortality_rate_per_1000 ~ z_ldi + z_age014 + z_age65, data = pt)
+pt_3 <- lm(mortality_rate_per_1000 ~ z_ldi + z_age014 + z_age65 + z_logdens,
+           data = pt)
+pt_formula_4 <- mortality_rate_per_1000 ~ z_ldi + z_age014 + z_age65 +
+  z_logdens + NUTS2
+pt_4 <- lm(pt_formula_4, data = pt)
+pt_primary_model <- lm(pt_formula_4, data = pt, weights = population)
+```
+
+```{r pt-escada-hc3}
+pt_ladder <- rbindlist(list(
+  tidy_vcov(pt_1, "z_ldi", sandwich::vcovHC(pt_1, type = "HC3"), "1: crude"),
+  tidy_vcov(pt_2, "z_ldi", sandwich::vcovHC(pt_2, type = "HC3"), "2: + age"),
+  tidy_vcov(pt_3, "z_ldi", sandwich::vcovHC(pt_3, type = "HC3"), "3: + density"),
+  tidy_vcov(
+    pt_primary_model, "z_ldi",
+    sandwich::vcovHC(pt_primary_model, type = "HC3"),
+    "4: population-weighted + NUTS2"
+  )
+), use.names = TRUE, fill = TRUE)
+
+show_effects(pt_ladder)
+```
+
+```{r pt-validar-resultados}
+expected_pt <- results_master[
+  block == "pt_mortality_ladder" & model_role == "main"
+]
+pt_validation <- data.table(
+  notebook = pt_ladder[4]$effect,
+  results_master = expected_pt$effect,
+  absolute_difference = abs(pt_ladder[4]$effect - expected_pt$effect)
+)
+kable(pt_validation)
+stopifnot(pt_validation$absolute_difference < 1e-8)
+```
+
+# 7. Sensibilidades já auditadas
+
+Estas tabelas são mostradas separadamente para não transformar o notebook
+principal num novo pipeline monolítico.
+
+## 7.1 Denominadores alternativos
+
+```{r sensibilidade-denominadores}
+kable(dat$sensitivity_tables$table_br_denominator_decomposition)
+kable(dat$sensitivity_tables$table_br_denominator_correct_effects)
+```
+
+## 7.2 Cobertura da literacia
+
+```{r sensibilidade-literacia}
+kable(dat$sensitivity_tables$table_br_literacy_coverage_sensitivity)
+```
+
+## 7.3 Análise anual
+
+```{r sensibilidade-anual}
+kable(dat$sensitivity_tables$table_br_annual_sensitivity)
+```
+
+## 7.4 Suavização espacial k = 100, 200 e 300
+
+```{r sensibilidade-k-espacial}
+kable(dat$sensitivity_tables$table_br_spatial_k_sensitivity)
+```
+
+## 7.5 Dependência espacial residual
+
+```{r moran}
+kable(dat$sensitivity_tables$table_br_moran)
+kable(dat$sensitivity_tables$table_pt_moran)
+```
+
+# 8. Figuras finais
+
+```{r figuras-finais, echo=FALSE, out.width='100%'}
+figures_dir <- file.path(dat$metadata$source_run, "figures")
+knitr::include_graphics(c(
+  file.path(figures_dir, "figure_1_ldi_maps.png"),
+  file.path(figures_dir, "figure_2_model_ladders.png")
+))
+```
+
+# 9. Guardar os modelos desta sessão
+
+```{r guardar-modelos}
+models_dir <- file.path(notebook_dir, "modelos")
+dir.create(models_dir, recursive = TRUE, showWarnings = FALSE)
+
+saveRDS(
+  list(
+    br_rate = list(rate_1, rate_2, rate_3),
+    br_share = list(share_1, share_2, share_3),
+    pt = list(pt_1, pt_2, pt_3, pt_4, pt_primary_model),
+    br_primary = br_primary,
+    pt_ladder = pt_ladder
+  ),
+  file.path(models_dir, "ldi_modelos_principais.rds")
+)
+```
+
+# 10. Informação da sessão
+
+```{r session-info}
+sessionInfo()
+```
+
