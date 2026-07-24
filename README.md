@@ -1,8 +1,9 @@
 # Public data access for the Portugal-Brazil deprivation study
 
-This repository contains only the code and source register used to obtain the
-public inputs. It does not contain the manuscript, prepared datasets, results,
-figures, or raw provider files.
+This repository contains the code and source register used to obtain the public
+inputs, together with source-only R Markdown notebooks for inspecting the
+statistical analysis. It does not contain the manuscript, prepared datasets,
+rendered results, figures, or raw provider files.
 
 ## General source access
 
@@ -34,3 +35,18 @@ download. The file naming and scope are described in `SIH_SUS_METHOD.md`.
 Official providers may revise live files. The generated access manifest records
 what was retrieved; it should not be interpreted as proof that a later download
 is byte-identical to the analytical snapshot.
+
+## Analysis notebooks
+
+The `analysis` directory contains two versioned R Markdown notebooks. The first
+checks and prepares the retained derived inputs from an audited run. The second
+refits the main Brazil and Portugal models and reads the audited sensitivity
+tables in separate chunks.
+
+These notebooks require paths to the audited run and the Brazilian municipal
+boundary file. Neither input is included in this public repository. See
+`analysis/README.md` for the required environment variables and execution order.
+
+This is an inspection layer built from retained derived inputs. It is not a
+claim of full reconstruction from every raw provider file.
+
