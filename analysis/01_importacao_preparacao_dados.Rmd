@@ -1,0 +1,339 @@
+---
+title: "Lusoindex — 01. Importação e preparação dos dados"
+subtitle: "Portugal e Brasil: base municipal para revisão chunk a chunk"
+author: "João Frutuoso"
+date: "`r format(Sys.Date(), '%d de %B de %Y')`"
+output:
+  html_document:
+    toc: true
+    toc_float:
+      collapsed: false
+    toc_depth: 3
+    number_sections: true
+    theme: flatly
+    highlight: textmate
+    code_folding: show
+    df_print: paged
+params:
+  run_id: "revision_v4_analysis_06"
+  run_dir: ""
+  br_shape_path: ""
+  pipeline_root: ""
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  fig.width = 8,
+  fig.height = 5,
+  dpi = 150
+)
+options(stringsAsFactors = FALSE, scipen = 999)
+```
+
+# Objetivo
+
+Este documento executa apenas a **importação, verificação e preparação** das
+bases municipais usadas no artigo. No final grava um ficheiro RDS que será
+aberto por `02_analise_estatistica.Rmd`.
+
+> Este notebook começa nos CSV municipais produzidos por uma execução auditada.
+> Esses inputs derivados não são distribuídos neste repositório. A reconstrução
+> integral dos 972 ficheiros SIH/SUS também não é repetida automaticamente aqui.
+
+# 1. Localizar os inputs
+
+```{r localizar-projeto}
+resolve_path <- function(value, env_name) {
+  value <- as.character(value)
+  if (!length(value) || is.na(value) || !nzchar(value)) {
+    value <- Sys.getenv(env_name, unset = "")
+  }
+  if (!nzchar(value)) return("")
+  normalizePath(value, winslash = "/", mustWork = FALSE)
+}
+
+input_file <- knitr::current_input(dir = TRUE)
+notebook_dir <- if (nzchar(input_file)) {
+  dirname(normalizePath(input_file, winslash = "/", mustWork = FALSE))
+} else {
+  normalizePath(getwd(), winslash = "/", mustWork = TRUE)
+}
+
+pipeline_root <- resolve_path(params$pipeline_root, "LDI_PIPELINE_DIR")
+run_dir <- resolve_path(params$run_dir, "LDI_AUDITED_RUN_DIR")
+if (!nzchar(run_dir) && nzchar(pipeline_root)) {
+  run_dir <- file.path(pipeline_root, "outputs", params$run_id)
+}
+if (!dir.exists(run_dir)) {
+  stop(
+    "Execução auditada inexistente. Defina params$run_dir ou LDI_AUDITED_RUN_DIR."
+  )
+}
+
+processed_dir <- file.path(notebook_dir, "dados_trabalhados")
+dir.create(processed_dir, recursive = TRUE, showWarnings = FALSE)
+
+cat("Notebook: ", notebook_dir, "\n", sep = "")
+cat("Execução auditada: ", run_dir, "\n", sep = "")
+```
+
+# 2. Ambiente R
+
+```{r ambiente-r}
+project_library <- if (nzchar(pipeline_root)) {
+  file.path(pipeline_root, "renv", "library", "R-4.3", "x86_64-w64-mingw32")
+} else {
+  ""
+}
+if (nzchar(project_library) && dir.exists(project_library)) {
+  .libPaths(unique(c(project_library, .libPaths())))
+}
+
+required_packages <- c("data.table", "sf", "knitr")
+missing_packages <- required_packages[
+  !vapply(required_packages, requireNamespace, logical(1), quietly = TRUE)
+]
+if (length(missing_packages)) {
+  stop("Pacotes em falta: ", paste(missing_packages, collapse = ", "))
+}
+
+library(data.table)
+library(sf)
+library(knitr)
+```
+
+# 3. Confirmar a execução auditada
+
+```{r confirmar-execucao}
+run_status <- fread(file.path(run_dir, "RUN_STATUS.csv"))
+orchestrator_status <- fread(file.path(run_dir, "ORCHESTRATOR_STATUS.csv"))
+checks <- fread(file.path(run_dir, "checks.csv"))
+
+kable(run_status, caption = "Estado da execução analítica")
+kable(orchestrator_status, caption = "Estado do orquestrador")
+
+if (!any(grepl("PASSED_QA", unlist(run_status), fixed = TRUE))) {
+  stop("A execução selecionada não apresenta PASSED_QA.")
+}
+```
+
+# 4. Importar os ficheiros analíticos
+
+```{r importar-csv}
+data_dir <- file.path(run_dir, "data")
+tables_dir <- file.path(run_dir, "tables")
+
+read_data <- function(filename) {
+  path <- file.path(data_dir, filename)
+  if (!file.exists(path)) stop("Ficheiro em falta: ", path)
+  fread(path, na.strings = c("", "NA"))
+}
+
+ldi <- read_data("ldi_municipality.csv")
+br_period <- read_data("br_external_validation_period.csv")
+br_year <- read_data("br_external_validation_year.csv")
+pt_mortality <- read_data("pt_mortality_validation.csv")
+pt_context <- read_data("pt_mainland_context.csv")
+results_master <- fread(file.path(run_dir, "RESULTS_MASTER.csv"))
+
+data_inventory <- data.table(
+  object = c("ldi", "br_period", "br_year", "pt_mortality", "pt_context", "results_master"),
+  rows = c(nrow(ldi), nrow(br_period), nrow(br_year), nrow(pt_mortality),
+           nrow(pt_context), nrow(results_master)),
+  columns = c(ncol(ldi), ncol(br_period), ncol(br_year), ncol(pt_mortality),
+              ncol(pt_context), ncol(results_master))
+)
+kable(data_inventory, caption = "Objetos importados")
+```
+
+# 5. Verificar identificadores e cobertura
+
+```{r verificar-identificadores}
+identifier_checks <- data.table(
+  check = c(
+    "Portugal: uma linha por município",
+    "Brasil: uma linha por município no período",
+    "Brasil: três linhas anuais por município",
+    "Brasil: todos os municípios com três anos completos"
+  ),
+  passed = c(
+    uniqueN(pt_mortality$id) == nrow(pt_mortality),
+    uniqueN(br_period$id) == nrow(br_period),
+    nrow(br_year) == 3L * uniqueN(br_year$id),
+    all(br_period$complete_three_years %in% TRUE)
+  ),
+  observed = c(
+    uniqueN(pt_mortality$id),
+    uniqueN(br_period$id),
+    nrow(br_year) / uniqueN(br_year$id),
+    sum(br_period$complete_three_years %in% TRUE)
+  )
+)
+kable(identifier_checks)
+stopifnot(all(identifier_checks$passed))
+```
+
+# 6. Preparar a base brasileira
+
+## 6.1 Juntar área municipal
+
+```{r br-geometria-area}
+br_shape_path <- resolve_path(params$br_shape_path, "LDI_BR_SHAPE_PATH")
+if (!nzchar(br_shape_path) && nzchar(pipeline_root)) {
+  br_shape_path <- file.path(
+    dirname(pipeline_root), "dados", "BR_malha", "BR_Municipios_2022.shp"
+  )
+}
+if (!file.exists(br_shape_path)) {
+  stop(
+    "Malha municipal inexistente. Defina params$br_shape_path ou LDI_BR_SHAPE_PATH."
+  )
+}
+
+br_shape <- st_read(br_shape_path, quiet = TRUE)
+br_area <- as.data.table(st_drop_geometry(br_shape))[
+  , .(id = as.character(CD_MUN), AREA_KM2 = as.numeric(AREA_KM2))
+]
+
+br_period[, id := as.character(id)]
+br_model <- merge(br_period, br_area, by = "id", all.x = TRUE, sort = FALSE)
+
+stopifnot(nrow(br_model) == 5570L)
+stopifnot(all(is.finite(br_model$AREA_KM2) & br_model$AREA_KM2 > 0))
+```
+
+## 6.2 Aplicar a amostra dos modelos
+
+```{r br-amostra-modelos}
+zscore <- function(x) {
+  x <- as.numeric(x)
+  (x - mean(x, na.rm = TRUE)) / sd(x, na.rm = TRUE)
+}
+
+br_model <- br_model[
+  is.finite(ldi_z) &
+    is.finite(pct_age_0_14) & is.finite(pct_age_70_plus) &
+    is.finite(population) & population > 0 &
+    is.finite(n_icsap_total) & is.finite(n_admissions_total) &
+    n_admissions_total > 0 & n_icsap_total >= 0 &
+    n_icsap_total <= n_admissions_total &
+    complete_three_years %in% TRUE &
+    is.finite(exposure_person_years) & exposure_person_years > 0
+]
+
+br_model[, population_density := population / AREA_KM2]
+br_model[, `:=`(
+  z_ldi = zscore(ldi_z),
+  z_age014 = zscore(pct_age_0_14),
+  z_age70 = zscore(pct_age_70_plus),
+  z_logdens = zscore(log(population_density)),
+  region_code = factor(region_code)
+)]
+setorder(br_model, id)
+
+stopifnot(nrow(br_model) == 5570L)
+```
+
+# 7. Preparar a base portuguesa
+
+```{r pt-amostra-modelos}
+pt_model <- copy(pt_mortality)
+pt_model[, id := as.character(id)]
+pt_model[, NUTS2 := factor(region_code)]
+
+pt_model <- pt_model[
+  is.finite(ldi_z) & is.finite(mortality_rate_per_1000) &
+    is.finite(pct_age_0_14) & is.finite(pct_age_65_plus) &
+    is.finite(population_density) & population_density > 0 &
+    is.finite(population) & population > 0 & !is.na(NUTS2)
+]
+
+pt_model[, `:=`(
+  z_ldi = zscore(ldi_z),
+  z_age014 = zscore(pct_age_0_14),
+  z_age65 = zscore(pct_age_65_plus),
+  z_logdens = zscore(log(population_density))
+)]
+setorder(pt_model, id)
+
+stopifnot(nrow(pt_model) == 272L)
+```
+
+# 8. Resumo das bases preparadas
+
+```{r resumo-bases}
+prepared_summary <- data.table(
+  country = c("Portugal", "Brazil"),
+  municipalities = c(nrow(pt_model), nrow(br_model)),
+  outcome = c("Crude mortality rate, 2020", "ICSAP admissions, 2021–2023"),
+  main_denominator = c("Residents", "Resident person-years / all admissions")
+)
+kable(prepared_summary)
+```
+
+# 9. Importar tabelas de sensibilidade
+
+```{r importar-tabelas-sensibilidade}
+table_files <- list.files(tables_dir, pattern = "\\.csv$", full.names = TRUE)
+sensitivity_tables <- setNames(
+  lapply(table_files, fread),
+  tools::file_path_sans_ext(basename(table_files))
+)
+
+cat(length(sensitivity_tables), "tabelas importadas.\n")
+```
+
+# 10. Guardar a base preparada
+
+```{r guardar-rds}
+prepared_bundle <- list(
+  metadata = list(
+    created = Sys.time(),
+    run_id = params$run_id,
+    pipeline_root = pipeline_root,
+    source_run = run_dir
+  ),
+  ldi = ldi,
+  br_period = br_period,
+  br_year = br_year,
+  br_model = br_model,
+  pt_mortality = pt_mortality,
+  pt_context = pt_context,
+  pt_model = pt_model,
+  results_master = results_master,
+  sensitivity_tables = sensitivity_tables,
+  run_status = run_status,
+  checks = checks
+)
+
+rds_path <- file.path(processed_dir, "ldi_dados_preparados.rds")
+saveRDS(prepared_bundle, rds_path, compress = "xz")
+
+cat("Base preparada gravada em:\n", rds_path, "\n", sep = "")
+cat("Tamanho: ", round(file.info(rds_path)$size / 1024^2, 2), " MB\n", sep = "")
+```
+
+# 11. Reconstrução integral opcional
+
+Para voltar aos ficheiros públicos de origem e reconstruir também o SIH/SUS,
+indique explicitamente o lançador do pipeline completo:
+
+```{r reconstrucao-integral, eval=FALSE}
+# Não executar casualmente: descarrega/processa 972 ficheiros mensais.
+pipeline_launcher <- Sys.getenv("LDI_FULL_PIPELINE_LAUNCHER", unset = "")
+stopifnot(nzchar(pipeline_launcher), file.exists(pipeline_launcher))
+system2(
+  pipeline_launcher,
+  args = c("full", "--run-id=NOVO_IDENTIFICADOR")
+)
+```
+
+# 12. Informação da sessão
+
+```{r session-info}
+sessionInfo()
+```
+
